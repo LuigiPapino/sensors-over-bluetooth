@@ -10,8 +10,8 @@ android {
         applicationId "net.dragora.sensorsoverbluetooth"
         minSdkVersion 23
         targetSdkVersion 28
-        versionCode 110
-        versionName "1.1"
+        versionCode 120
+        versionName "0.20"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
     buildTypes {

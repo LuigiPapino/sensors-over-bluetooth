@@ -1,6 +1,10 @@
+### What?
 Send over bluetooth the data coming from the device's sensors like accelerometer and gyroscope.
 
 ![screen 1](media/screen1.png "App Screen")
+
+### Why?
+Sometimes you just need to analyse the data coming from those sensors on your laptop with a specific software
 
 ### How to use:
 1. Pair the smartphone and your laptop or any other bluetooth device through system interface

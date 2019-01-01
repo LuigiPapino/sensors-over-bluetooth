@@ -12,6 +12,7 @@ import com.github.ivbaranov.rxbluetooth.RxBluetooth
 import com.github.pwittchen.reactivesensors.library.ReactiveSensorFilter
 import com.github.pwittchen.reactivesensors.library.ReactiveSensors
 import com.google.android.material.snackbar.Snackbar
+import io.reactivex.Flowable
 import io.reactivex.disposables.CompositeDisposable
 import io.reactivex.disposables.Disposable
 import io.reactivex.plugins.RxJavaPlugins
@@ -19,7 +20,10 @@ import io.reactivex.schedulers.Schedulers
 import kotlinx.android.synthetic.main.activity_main.*
 import kotlinx.android.synthetic.main.content_main.*
 import net.dragora.sensorsoverbluetooth.ServerState.*
+import org.reactivestreams.Publisher
 import java.util.*
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 class MainActivity : AppCompatActivity() {
 
@@ -32,6 +36,8 @@ class MainActivity : AppCompatActivity() {
     private var serverDisposable = CompositeDisposable()
 
     private var sensorDelay = SensorManager.SENSOR_DELAY_GAME
+
+    private var clockPeriod = 10000L
 
     private var sensors = listOf<SensorItem>()
 
@@ -50,6 +56,7 @@ class MainActivity : AppCompatActivity() {
             toggleServer()
         }
         setupSensorsList()
+        setupClockBar()
         setupDelayBar()
 
 
@@ -108,6 +115,33 @@ class MainActivity : AppCompatActivity() {
 
         })
     }
+
+    private fun setupClockBar() {
+
+        clockPeriod = storage.readClockPeriod()
+        val progress = clockPeriod /  1000
+        runOnUiThread {
+            clock_period.progress = progress.toInt()
+            clock_caption.text = "Clock Period ${progress}ms"
+        }
+
+        clock_period.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                log("clock period $progress")
+                clockPeriod = progress * 1000L
+                clock_caption.text = "Clock Period ${progress}ms"
+                storage.storeClockPeriod(clockPeriod)
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {
+            }
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+            }
+
+        })
+    }
+
 
     private fun setupSensorsList() {
         sensors_recycler.layoutManager = LinearLayoutManager(this)
@@ -189,27 +223,65 @@ class MainActivity : AppCompatActivity() {
                 })
     }
 
+    private val clock = AtomicInteger(0)
     private fun sendSensorsData() {
 
-        sensors.filter { it.selected }.map { it.sensor }
-            .forEach { sensor ->
+        clock.set(0)
+        val observables: Iterable<Publisher<DataEvent>> = sensors
+            .asSequence()
+            .filter { it.selected }
+            .map { it.sensor }
+            .map { sensor ->
                 rxSensors.observeSensor(sensor.type, sensorDelay)
                     .filter(ReactiveSensorFilter.filterSensorChanged())
                     .map { it.sensorEvent }
+                    .map { event ->
+                        DataEvent(event.timestamp, event.sensor.stringType, event.values)
+                    }
                     .subscribeOn(Schedulers.computation())
                     .observeOn(Schedulers.io())
-                    .subscribe { event ->
-                        val data = DataEvent(event.timestamp, event.sensor.stringType, event.values).toString()
-                        sendData(data)
-                    }
+            }.asIterable()
+
+
+        serverDisposable += Flowable.combineLatest(observables) { events ->
+            events.map { it as DataEvent }
+        }
+            .subscribeOn(Schedulers.computation())
+            .observeOn(Schedulers.io())
+            .throttleLast(clockPeriod, TimeUnit.MICROSECONDS)
+            .subscribe { events ->
+                if(clock.get() == Int.MAX_VALUE){
+                    clock.set(0)
+                }
+                val clockValue = clock.incrementAndGet()
+                val buffer = StringBuffer()
+                buffer.appendln("<event=$clockValue>")
+                events
+                    .forEach { buffer.appendln(it.toString()) }
+                buffer.appendln("</event>")
+                sendData(buffer.toString())
             }
+
+
+        /*.forEach { sensor ->
+            rxSensors.observeSensor(sensor.type, sensorDelay)
+                .filter(ReactiveSensorFilter.filterSensorChanged())
+
+                .map { it.sensorEvent }
+                .subscribeOn(Schedulers.computation())
+                .observeOn(Schedulers.io())
+                .subscribe { event ->
+                    val data = DataEvent(event.timestamp, event.sensor.stringType, event.values).toString()
+                    sendData(data)
+                }
+        }*/
 
     }
 
     private fun sendData(data: String) {
-        log("sendData $data")
+        log("sendData\n$data")
         synchronized(bluConnection!!) {
-            bluConnection?.send("$data\n")
+            bluConnection?.send("$data")
         }
     }
 
